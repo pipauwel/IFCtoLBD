@@ -24,12 +24,20 @@ import com.buildingsmart.tech.ifcowl.vo.TypeVO;
 import nl.tue.isbe.Namespace;
 import nl.tue.isbe.BOT.*;
 import nl.tue.isbe.IFC.*;
+import nl.tue.isbe.bimsparql.geometry.Geometry;
+import nl.tue.isbe.bimsparql.geometry.InstanceGeometry;
+import nl.tue.isbe.bimsparql.geometry.ewkt.WktWriteException;
 import nl.tue.isbe.ifcspftools.GuidHandler;
+import org.ifcopenshell.IfcOpenShellEntityInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 public class RDFWriter {
 
@@ -43,8 +51,10 @@ public class RDFWriter {
     //Writing output
     private final boolean hasBuildingElements;
     private final boolean hasBuildingProperties;
+    private final boolean hasGeometry;
 
     private Map<Long, IFCVO> linemap;
+    private Map<Long, IfcOpenShellEntityInstance> geometryMap;
 
     private InputStream inputStream;
 
@@ -53,14 +63,17 @@ public class RDFWriter {
     private static final Logger LOG = LoggerFactory.getLogger(be.ugent.RDFWriter.class);
 
     public RDFWriter(InputStream inputStream, String baseURI, Map<String, EntityVO> ent, Map<String, TypeVO> typ,
-                     Map<Long, IFCVO> linemap, boolean hasBuildingElements, boolean hasBuildingProperties) {
+                     Map<Long, IFCVO> linemap, Map<Long, IfcOpenShellEntityInstance> geometryMap,
+                     boolean hasBuildingElements, boolean hasBuildingProperties, boolean hasGeometry) {
         this.inputStream = inputStream;
         this.baseURI = baseURI;
         this.ent = ent;
         this.typ = typ;
         this.linemap = linemap;
+        this.geometryMap = geometryMap;
         this.hasBuildingElements = hasBuildingElements;
         this.hasBuildingProperties = hasBuildingProperties;
+        this.hasGeometry = hasGeometry;
     }
 
     public void setIfcReader(IfcSpfReader r) {
@@ -84,7 +97,7 @@ public class RDFWriter {
             out.write(s.getBytes());
 
             parseToBOTClasses();
-            writeBOTdata(out, hasBuildingElements, hasBuildingProperties);
+            writeBOTdata(out, hasBuildingElements, hasBuildingProperties, hasGeometry);
 
             // Save memory
             linemap.clear();
@@ -212,6 +225,8 @@ public class RDFWriter {
         LOG.info("linking everything");
         linkSitesToBuildings();
         linkBuildingsToBuildingStoreys();
+        if(hasGeometry)
+            linkElementsWithWKTGeom();
         linkBuildingStoreysToSpaces();
         linkStoreysToContainedElements();
         linkSpacesToContainedElements();
@@ -265,6 +280,17 @@ public class RDFWriter {
                     }
                 }
             }
+        }
+    }
+
+    private void linkElementsWithWKTGeom(){
+        GeometryConverter geomConverter = new GeometryConverter();
+        for(Element el : Element.elementList){
+            IfcOpenShellEntityInstance shellInstance = geometryMap.get(el.getLineNum());
+            if(shellInstance == null)
+                continue;
+            InstanceGeometry ig = geomConverter.getGeometry(String.valueOf(el.getLineNum()),shellInstance);
+            el.setInstanceGeometry(ig);
         }
     }
 
@@ -537,7 +563,7 @@ public class RDFWriter {
         }
     }
 
-    private void writeBOTdata(OutputStream out, boolean prod, boolean props){
+    private void writeBOTdata(OutputStream out, boolean prod, boolean props, boolean geom){
         try {
             int counter = 0;
 
@@ -733,6 +759,15 @@ public class RDFWriter {
                             output += "\tprops:"+p.getPropertyNameNoSpace()+" \""+ p.getValue() +"\"^^xsd:double ";
                     }
                 }
+                if(geom && el.getInstanceGeometry()!= null){
+                    GeometryConverter c = new GeometryConverter();
+                    Geometry g = c.toGeometry(el.getInstanceGeometry());
+                    String s = c.toWKT(g);
+                    //String igType = ig.getType();
+                    //long igId = ig.getId();
+
+                    output += ";\r\n" + "\tgeom:asWKT \""+s+"\"^^xsd:string ";
+                }
                 output += ". \r\n\r\n";
 
                 out.write(output.getBytes());
@@ -760,9 +795,8 @@ public class RDFWriter {
             LOG.debug("written interfaces");
             out.write(output.getBytes());
             out.flush();
-        } catch (IOException e) {
+        } catch (IOException | WktWriteException e) {
             e.printStackTrace();
         }
     }
-
 }

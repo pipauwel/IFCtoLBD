@@ -19,6 +19,7 @@ package nl.tue.isbe.BOT;
 
 import com.buildingsmart.tech.ifcowl.vo.IFCVO;
 import nl.tue.isbe.IFC.IfcElementType;
+import nl.tue.isbe.bimsparql.geometry.InstanceGeometry;
 import nl.tue.isbe.ifcspftools.Guid;
 import nl.tue.isbe.ifcspftools.GuidHandler;
 
@@ -51,6 +52,9 @@ public class Element {
 
     private List<Element> subElements = new ArrayList<Element>(); //hasSubElement //Relation between an element a) and another element b) hosted by element a)
     private List<Element> hostedElements = new ArrayList<Element>();
+
+    private InstanceGeometry ig;
+    private String wktGeom;
 
     private IFCVO lineEntry;
     public static List<Element> elementList = new ArrayList<Element>();
@@ -375,6 +379,22 @@ public class Element {
 
     public void setHostingElement(Element el){
         hostingElement = el;
+    }
+
+    public void setInstanceGeometry(InstanceGeometry ig){
+        this.ig = ig;
+    }
+
+    public InstanceGeometry getInstanceGeometry(){
+        return ig;
+    }
+
+    public void setWKtGeom(String wktGeom){
+        this.wktGeom = wktGeom;
+    }
+
+    public String getWKtGeom(){
+        return wktGeom;
     }
 
     public List<Element> getSubElements(){

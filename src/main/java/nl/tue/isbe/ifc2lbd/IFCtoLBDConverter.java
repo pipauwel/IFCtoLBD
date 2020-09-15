@@ -20,12 +20,14 @@ package nl.tue.isbe.ifc2lbd;
 import be.ugent.IfcSpfParser;
 import be.ugent.IfcSpfReader;
 import com.buildingsmart.tech.ifcowl.vo.IFCVO;
+import nl.tue.isbe.IFC.IfcVersion;
+import nl.tue.isbe.IFC.IfcVersionException;
+import nl.tue.isbe.bimsparql.geometry.ewkt.WktWriteException;
+import org.ifcopenshell.IfcOpenShellEntityInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -42,6 +44,7 @@ public class IFCtoLBDConverter {
 	private static final int FLAG_BASEURI = 0;
 	private static final int FLAG_BELEMENTS = 1;
 	private static final int FLAG_PROPS = 2;
+	private static final int FLAG_GEOM = 3;
 
 	private final String ifcFilename;
 	private final String uriBase;
@@ -49,9 +52,11 @@ public class IFCtoLBDConverter {
 
 	private final boolean hasBuildingElements;
 	private final boolean hasBuildingProperties;
+	private final boolean hasGeometry;
 
 	private int idCounter = 0;
 	private Map<Long, IFCVO> linemap = new HashMap<>();
+	private Map<Long, IfcOpenShellEntityInstance> geometryMap = new HashMap<>();
 
 	private String timeLog = new SimpleDateFormat("yyyyMMdd_HHmmss").format(Calendar.getInstance().getTime());
 	public static String DEFAULT_PATH = "";
@@ -60,7 +65,7 @@ public class IFCtoLBDConverter {
 	// CONSTRUCTOR
 	// --------------------
 	public IFCtoLBDConverter(String uriBase, String ifcFilename, String targetFile,
-			boolean hasBuildingElements, boolean hasBuildingProperties) {
+			boolean hasBuildingElements, boolean hasBuildingProperties, boolean hasGeometry) {
 		if (!uriBase.endsWith("#") && !uriBase.endsWith("/"))
 			uriBase += "#";
 		this.uriBase = uriBase;
@@ -70,11 +75,12 @@ public class IFCtoLBDConverter {
 
 		this.hasBuildingElements = !hasBuildingElements;
 		this.hasBuildingProperties = !hasBuildingProperties;
+		this.hasGeometry = !hasGeometry;
 	}
 
 	public static void main(String[] args) {
-		String[] options = new String[]{"--baseURI", "--excludeElements", "--excludeProps"};
-		Boolean[] optionValues = new Boolean[]{false, false, false};
+		String[] options = new String[]{"--baseURI", "--excludeElements", "--excludeProps", "--excludeGeometry"};
+		Boolean[] optionValues = new Boolean[]{false, false, false, false};
 
 		List<String> argsList = new ArrayList<>(Arrays.asList(args));
 		for (int i = 0; i < options.length; ++i) {
@@ -95,7 +101,7 @@ public class IFCtoLBDConverter {
 
 		if (argsList.size() != numRequiredOptions) {
 			LOG.info("Usage:\n"
-					+ "    IfcSpfReader [--baseURI <baseURI>] [--excludeElements] [--excludeProps] <input_file.ifc> <output_file.ttl>\n"
+					+ "    IfcSpfReader [--baseURI <baseURI>] [--excludeElements] [--excludeProps] [--excludeGeometry] <input_file.ifc> <output_file.ttl>\n"
 					+ "    Example: IfcSpfReader --baseURI https://mybuildingdata.net/myproject# --excludeElements myFile.ifc myFile.ttl\n");
 			return;
 		}
@@ -116,8 +122,7 @@ public class IFCtoLBDConverter {
 			outputFile = argsList.get(1);
 		}
 
-
-		IFCtoLBDConverter conv = new IFCtoLBDConverter(baseURI, inputFile, outputFile, optionValues[FLAG_BELEMENTS], optionValues[FLAG_PROPS]);
+		IFCtoLBDConverter conv = new IFCtoLBDConverter(baseURI, inputFile, outputFile, optionValues[FLAG_BELEMENTS], optionValues[FLAG_PROPS], optionValues[FLAG_GEOM]);
 
 		//reading file - IfcSpfReader
 		IfcSpfReader r = new IfcSpfReader();
@@ -150,15 +155,25 @@ public class IFCtoLBDConverter {
 			conv.idCounter = parser.getIdCounter();
 			conv.linemap = parser.getLinemap();
 
-			RDFWriter w = new RDFWriter(is, conv.uriBase, r.getEntityMap(), r.getTypeMap(), conv.linemap,
-					conv.hasBuildingElements, conv.hasBuildingProperties);
+			if(conv.hasGeometry){
+				InputStream input = new FileInputStream(conv.ifcFilename);
+				OutputStream output = new FileOutputStream(conv.targetFile + ".out"); //<input.ifc> <output.xxx>
+				GeometryConverter geomConverter = new GeometryConverter();
+				//TODO: enable other IFC versions - manually set for now
+				IfcVersion ifcv = IfcVersion.getIfcVersion("IFC4");
+				geomConverter.parseModel2GeometryStream(input, output, ifcv);
+				conv.geometryMap = geomConverter.getAllInstancesById();
+			}
+
+			RDFWriter w = new RDFWriter(is, conv.uriBase, r.getEntityMap(), r.getTypeMap(), conv.linemap, conv.geometryMap,
+					conv.hasBuildingElements, conv.hasBuildingProperties, conv.hasGeometry);
 			w.setIfcReader(r);
 			try (FileOutputStream out = new FileOutputStream(conv.targetFile)) {
 				LOG.info("Started writing to stream");
 				w.writeModelToStream(out);
 				LOG.info("Finished!!");
 			}
-		} catch (IOException e) {
+		} catch (IOException | IfcVersionException | WktWriteException e) {
 			e.printStackTrace();
 		}
 	}
